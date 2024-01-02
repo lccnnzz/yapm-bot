@@ -1,5 +1,9 @@
 import sqlite3
+import json
+import requests
 from datetime import datetime
+from multipledispatch import dispatch
+DB_SCHEMA = '../config/schema.sql'
 
 class Database(object):
     def __init__(self, db:str):
@@ -7,6 +11,8 @@ class Database(object):
         self.__connection = sqlite3.connect(self.path, check_same_thread=False)
         self.__connection.row_factory = self.dict_factory
         self.__cursor = self.__connection.cursor()
+        self.__load_schema(DB_SCHEMA)
+        self.__load_useragents(UA_LIST)
     
     def close(self):
         self.__connection.close()
@@ -17,20 +23,22 @@ class Database(object):
 
     def users(self):
         return self.__cursor.execute(f"SELECT * FROM Users").fetchall()
-    
+
     def user_items(self, user_id):
         try:
             return self.__cursor.execute(f"SELECT * FROM UserItems WHERE user_id='{user_id}'").fetchall()
         except:
             return []
 
+    @dispatch(str)
     def item_prices(self, item_id):
         try:
             return self.__cursor.execute(f"SELECT * FROM Prices  JOIN  WHERE item_id='{item_id}' ORDER BY timestamp DESC").fetchall()
         except:
             return []
 
-    def useritem_prices(self, user_id, item_id):
+    @dispatch(str, str)
+    def item_prices(self, user_id, item_id):
         query = f"""
             SELECT P.timestamp, P.item_id, P.price, UI.item_name
             FROM Prices AS P 
@@ -85,5 +93,14 @@ class Database(object):
         self.__cursor.execute(f"DELETE FROM UserItems WHERE user_id = '{user_id}' AND item_id = '{item_id}'")
         self.__connection.commit()
     
+    def __load_schema(self, schema):
+    	with open(schema, 'r') as query:
+    		self.__cursor.executescript(query.read())
+
+    def __load_useragents(self, agents):
+        res = requests.get('https://www.useragents.me/api').json()
+        for item in res['data']:
+            self.add_useragent(item['ua'])
+
     def increment_useragent(self, ua_id):
         pass

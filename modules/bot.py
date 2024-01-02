@@ -92,7 +92,6 @@ class Bot(threading.Thread):
         message = f"📦 Yet Another Price Monitor 📦\n#️⃣ Versione: 0.5\n🗓️ Rilasciato il: 22 Dic 2023\n🔓 Licenza: Copyleft\n📝 Github: lccnnzz"
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
-
     async def add_item(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('Inserisci il codice del prodotto o il link Amazon')
         return self.ITEM_ID
@@ -180,8 +179,7 @@ class Bot(threading.Thread):
             await update.message.reply_text(f'Il tempo di aggiornamento non è stato modificato.\n🚫 Il valore inserito no è valido!')            
         return ConversationHandler.END
    
-
-    # Conversation Handler builders
+    # Conversation Handler Builders
     def __additem_handler(self):
         return ConversationHandler(
             entry_points=[CommandHandler('add', self.add_item)],

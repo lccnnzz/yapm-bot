@@ -87,7 +87,7 @@ class Monitor(threading.Thread):
         return self.db.user_items(self.id)
     
     def item_prices(self, item_id:str):
-        return self.db.useritem_prices(user_id=self.id, item_id=item_id)
+        return self.db.item_prices(user_id=self.id, item_id=item_id)
     
     def last_prices(self):
         prices = []
