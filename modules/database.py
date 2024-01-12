@@ -3,7 +3,7 @@ import json
 import requests
 from datetime import datetime
 from multipledispatch import dispatch
-DB_SCHEMA = '../config/schema.sql'
+DB_SCHEMA = 'config/schema.sql'
 
 class Database(object):
     def __init__(self, db:str):
@@ -12,7 +12,10 @@ class Database(object):
         self.__connection.row_factory = self.dict_factory
         self.__cursor = self.__connection.cursor()
         self.__load_schema(DB_SCHEMA)
-        self.__load_useragents(UA_LIST)
+        try:
+            self.__load_useragents()
+        except:
+            pass
     
     def close(self):
         self.__connection.close()
@@ -30,15 +33,24 @@ class Database(object):
         except:
             return []
 
+    def user_refresht(self, user_id):
+        return self.__cursor.execute(f"SELECT refresh_time FROM Users WHERE id='{user_id}'").fetchone()['refresh_time']
+    
+    def user_minvar(self, user_id):
+        return self.__cursor.execute(f"SELECT min_variation FROM Users WHERE id='{user_id}'").fetchone()['min_variation']
+
+    def user_dealvar(self, user_id):
+        return self.__cursor.execute(f"SELECT deal_variation FROM Users WHERE id='{user_id}'").fetchone()['deal_variation']
+
     @dispatch(str)
     def item_prices(self, item_id):
         try:
-            return self.__cursor.execute(f"SELECT * FROM Prices  JOIN  WHERE item_id='{item_id}' ORDER BY timestamp DESC").fetchall()
+            return self.__cursor.execute(f"SELECT * FROM Prices WHERE item_id='{item_id}' ORDER BY timestamp DESC").fetchall()
         except:
             return []
 
-    @dispatch(str, str)
-    def item_prices(self, user_id, item_id):
+    @dispatch(str, int)
+    def item_prices(self, item_id, user_id):
         query = f"""
             SELECT P.timestamp, P.item_id, P.price, UI.item_name
             FROM Prices AS P 
@@ -50,7 +62,7 @@ class Database(object):
             return self.__cursor.execute(query).fetchall()
         except:
             return []
- 
+
     def get_useragents(self):
         return self.__cursor.execute(f"SELECT * FROM UserAgents").fetchall()
 
@@ -68,7 +80,7 @@ class Database(object):
     
     def add_user(self, user_id, user_name):
         if not self.user_exists(user_id):
-            self.__cursor.execute(f"INSERT INTO Users VALUES('{user_id}', '{user_name}');")
+            self.__cursor.execute(f"INSERT INTO Users('id', 'name') VALUES('{user_id}', '{user_name}');")
             self.__connection.commit()
 
     def add_item(self, user_id, item_id, item_name):
@@ -86,6 +98,10 @@ class Database(object):
             self.__cursor.execute(f"INSERT INTO UserAgents (ua, added) VALUES ('{user_agent}', '{datetime.now().astimezone().isoformat()}')")
             self.__connection.commit()
     
+    def upd_refreshtime(self, user_id, refresh_t):
+        self.__cursor.execute(f"UPDATE Users SET refresh_time={refresh_t} WHERE id={user_id}")
+        self.__connection.commit()
+
     def remove_user(self, user_id):
         pass
 
@@ -97,7 +113,7 @@ class Database(object):
     	with open(schema, 'r') as query:
     		self.__cursor.executescript(query.read())
 
-    def __load_useragents(self, agents):
+    def __load_useragents(self):
         res = requests.get('https://www.useragents.me/api').json()
         for item in res['data']:
             self.add_useragent(item['ua'])

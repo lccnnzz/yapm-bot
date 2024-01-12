@@ -23,6 +23,8 @@ from telegram.ext import (
 
 logging.basicConfig(encoding='utf-8', level=logging.INFO)
 
+MIN_REFRESH_TIME = 3600
+
 class Bot(threading.Thread):
     # Regular Expressions
     AMZN_FULL_URL = r'^https\:\/\/www\.amazon\.it\/*.*\/dp\/(\w{10,10}).*'
@@ -47,8 +49,14 @@ class Bot(threading.Thread):
         # Database config
         self.db = database
         self.lock = lock
-    
+
+    async def imalive(self, application):
+        for user in self.db.users():
+            message = f'Ciao {user['name']}, il bot è stato riavviato!\nSeleziona il comando /start, grazie.'
+            await self.application.bot.send_message(chat_id=user['id'], text=message)
+
     def run(self):
+        self.application.post_init = self.imalive
         self.application.run_polling()
 
     def stop(self):
@@ -79,14 +87,15 @@ class Bot(threading.Thread):
     # Command Handlers
     async def join(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
-        if self.get_monitor(user.id):   
+        if monitor := self.get_monitor(user.id):   
             message = f'Ciao {user.first_name}, hai già avviato questo Bot'
         else:
-            self.add_monitor(user.id, user.name)
+            monitor = self.add_monitor(user.id, user.name)
             message = f'Ciao {user.first_name}, benvenuto!'
-
+            context.job_queue.run_repeating(self.notify, (monitor.refresh_time + 120), chat_id=update.effective_chat.id, name=str(user.id))
+        
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
-
+        
     async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         message = f"📦 Yet Another Price Monitor 📦\n#️⃣ Versione: 0.5\n🗓️ Rilasciato il: 22 Dic 2023\n🔓 Licenza: Copyleft\n📝 Github: lccnnzz"
@@ -104,7 +113,7 @@ class Bot(threading.Thread):
         await update.message.reply_text(f'Questi sono gli articoli nella tua lista', reply_markup=keyboard_markup)
         return self.ITEM_NAME
 
-    async def last_prices(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def last_prices(self,  update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         monitor = self.get_monitor(user.id)
         if monitor.items():
@@ -173,10 +182,15 @@ class Bot(threading.Thread):
     ## Change refresh time
     async def refresh_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         monitor = self.get_monitor(update.effective_user.id)
-        if monitor.set_refreshtime(int(update.message.text)):
-            await update.message.reply_text(f'✅ Il tempo di aggiornamento è stato modificato correttamente!')
+        if (refresh_t := int(update.message.text)) < MIN_REFRESH_TIME:
+            await update.message.reply_text(f'Il tempo di aggiornamento non è stato modificato.\n🚫 Il valore inserito no è valido!')
         else:
-            await update.message.reply_text(f'Il tempo di aggiornamento non è stato modificato.\n🚫 Il valore inserito no è valido!')            
+            monitor.refresh_time = refresh_t
+            for job in context.job_queue.get_jobs_by_name(update.effective_chat.id):
+                job.schedule_removal()
+            context.job_queue.run_repeating(self.notify, (refresh_t + 120), chat_id=update.effective_chat.id, name=str(update.effective_chat.id))
+            await update.message.reply_text(f'✅ Il tempo di aggiornamento è stato modificato correttamente!')
+
         return ConversationHandler.END
    
     # Conversation Handler Builders
@@ -207,3 +221,14 @@ class Bot(threading.Thread):
             },
             fallbacks=[]
         )
+    
+    async def notify(self, context: ContextTypes.DEFAULT_TYPE):
+        monitor = self.get_monitor(context.job.chat_id)
+        if monitor.items():
+            lines = [f'•\t{item["name"]}\t{item["price"]}€' for item in monitor.last_prices()]  
+            if lines:
+                await context.bot.send_message(context.job.chat_id, text='\n'.join(lines))
+            else:
+                await context.bot.send_message(context.job.chat_id, text='😞 Spiacente, non è stato ancora aggiornato il prezzo degli articoli che hai inserito')
+        else:
+            await context.bot.send_message(context.job.chat_id, text='😞 Spiacente, non hai ancora inserito articoli in monitoraggio')    

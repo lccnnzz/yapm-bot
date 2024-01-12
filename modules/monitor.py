@@ -8,11 +8,7 @@ import threading
 import logging
 import sqlite3
 from  modules.database import Database
-
-DEAL_THRSH = 0.15
-PRICE_THRSH = 0.03
-MIN_VARIATION = 0.03
-MIN_REFRESH_TIME = 3600
+    
 BASE_URL = 'https://www.amazon.it/dp/'
 
 # Class Monitor
@@ -25,9 +21,6 @@ class Monitor(threading.Thread):
         self.owner = owner
         self.lock = thread_lock
         self.db = database
-        self.__refresh_time = 21600
-        self.min_variation = MIN_VARIATION
-        self.deal_threshold = DEAL_THRSH
         self.__stop_req = False
         self.__create_user()
     
@@ -37,14 +30,11 @@ class Monitor(threading.Thread):
 
     @property
     def refresh_time(self):
-        return self.__refresh_time
+        return self.db.user_refresht(self.id)
 
-    def set_refreshtime(self, refresh_t:int):
-        if refresh_t < MIN_REFRESH_TIME:
-            return False
-        else:
-            self.__refresh_time = refresh_t
-            return True
+    @refresh_time.setter
+    def refresh_time(self, refresh_t:int):
+        self.db.upd_refreshtime(self.id, refresh_t)
 
     def add_item(self, item_id:str, item_name:str):
         with self.lock:
@@ -87,7 +77,7 @@ class Monitor(threading.Thread):
         return self.db.user_items(self.id)
     
     def item_prices(self, item_id:str):
-        return self.db.item_prices(user_id=self.id, item_id=item_id)
+        return self.db.item_prices(item_id, self.id)
     
     def last_prices(self):
         prices = []
@@ -103,9 +93,14 @@ class Monitor(threading.Thread):
     def run(self):
         while not self.__stop_req:
             self.get_prices()
-            time.sleep(self.__refresh_time)
+            #time.sleep(self.refresh_time)
+            time.sleep(3600)
         self.__stop_req = False
 
     def stop(self):
         if self.is_alive() and not self.__stop_req:
             self.__stop_req = True
+
+    def compare_prices(self):
+        for item in self.items():
+            itemprices_df = pd.DataFrame.from_dict(self.item_prices())
