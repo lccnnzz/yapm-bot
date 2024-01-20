@@ -30,11 +30,13 @@ class Monitor(threading.Thread):
 
     @property
     def refresh_time(self):
-        return self.db.user_refresht(self.id)
+        with self.lock:
+            return self.db.user_refresht(self.id)
 
     @refresh_time.setter
     def refresh_time(self, refresh_t:int):
-        self.db.upd_refreshtime(self.id, refresh_t)
+        with self.lock:
+            self.db.upd_refreshtime(self.id, refresh_t)
 
     def add_item(self, item_id:str, item_name:str):
         with self.lock:
@@ -100,7 +102,3 @@ class Monitor(threading.Thread):
     def stop(self):
         if self.is_alive() and not self.__stop_req:
             self.__stop_req = True
-
-    def compare_prices(self):
-        for item in self.items():
-            itemprices_df = pd.DataFrame.from_dict(self.item_prices())

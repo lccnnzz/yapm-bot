@@ -6,6 +6,8 @@ from  modules.database import Database
 from  modules.monitor import Monitor
 import time
 import re
+import pandas as pd
+import numpy as np
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
@@ -93,7 +95,6 @@ class Bot(threading.Thread):
             monitor = self.add_monitor(user.id, user.name)
             message = f'Ciao {user.first_name}, benvenuto!'
             context.job_queue.run_repeating(self.notify, (monitor.refresh_time + 120), chat_id=update.effective_chat.id, name=str(user.id))
-        
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
         
     async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,14 +222,32 @@ class Bot(threading.Thread):
             },
             fallbacks=[]
         )
-    
+        
     async def notify(self, context: ContextTypes.DEFAULT_TYPE):
         monitor = self.get_monitor(context.job.chat_id)
-        if monitor.items():
-            lines = [f'•\t{item["name"]}\t{item["price"]}€' for item in monitor.last_prices()]  
-            if lines:
-                await context.bot.send_message(context.job.chat_id, text='\n'.join(lines))
-            else:
-                await context.bot.send_message(context.job.chat_id, text='😞 Spiacente, non è stato ancora aggiornato il prezzo degli articoli che hai inserito')
-        else:
-            await context.bot.send_message(context.job.chat_id, text='😞 Spiacente, non hai ancora inserito articoli in monitoraggio')    
+        for item in monitor.items():
+            prices = monitor.item_prices(item['item_id'])
+            prices_df = pd.DataFrame.from_dict(prices)
+            prices_df['timestamp'] = prices_df['timestamp'].apply(lambda x: (pd.Timestamp(x)))
+            prices_gb = prices_df.groupby(pd.Grouper(key='timestamp', axis=0, freq='D')).min().reset_index().dropna()
+        
+            conditions = [
+                prices_gb.iloc[-1]['price'] > prices_gb.iloc[-2]['price'],
+                prices_gb.iloc[-1]['price'] == prices_gb.iloc[-2]['price'],
+                prices_gb.iloc[-1]['price'] < prices_gb.iloc[-2]['price']
+            ]
+            choices = [
+                f'↗️',
+                f'↘️',
+                f'⏸️',
+            ]
+            price = {
+                'last' : prices_gb.iloc[-1]["price"],
+                'best' : prices_gb['price'].min(),
+                'median' : prices_gb['price'].median(),
+                'mode' : prices_gb['price'].mode()[0],
+                'trend' : np.select(conditions, choices, default='-')
+            }
+
+            message = f'{item["item_name"]}\n\tPrezzo aggiornato:\t{price["last"]}€ {price["trend"]}\n\tPrezzo più basso:\t{price["best"]}€\n\tPrezzo mediano:\t\t{price["median"]}€\n\tPrezzo frequente:\t{price["mode"]}€'
+            await context.bot.send_message(context.job.chat_id, text=message)

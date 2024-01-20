@@ -73,7 +73,7 @@ class Database(object):
     def item_exists(self, user_id, item_id):
         res = self.__cursor.execute(f"SELECT * FROM UserItems WHERE item_id='{item_id}'").fetchall()
         return True if res else False
-    
+
     def ua_exists(self, user_agent):
         res = self.__cursor.execute(f"SELECT * FROM UserAgents WHERE ua='{user_agent}'").fetchall()
         return True if res else False
