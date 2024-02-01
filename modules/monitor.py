@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup as bs
 import threading
 import logging
 import sqlite3
+import pandas as pd
+import numpy as np
 from  modules.database import Database
     
 BASE_URL = 'https://www.amazon.it/dp/'
@@ -28,6 +30,9 @@ class Monitor(threading.Thread):
         with self.lock:
             self.db.add_user(self.id, self.owner)
 
+    def get_id(self):
+        return self.id
+        
     @property
     def refresh_time(self):
         with self.lock:
@@ -81,22 +86,37 @@ class Monitor(threading.Thread):
     def item_prices(self, item_id:str):
         return self.db.item_prices(item_id, self.id)
     
-    def last_prices(self):
-        prices = []
-        for item in self.items():
-            if item_prices := self.item_prices(item['item_id']):
-                prices.append({
-                    'id' : item['item_id'],
-                    'name' : item['item_name'],
-                    'price' : item_prices[0]['price']
-                })
-        return prices
+    def item_pricetag(self, item_id:str):
+        prices = self.db.item_prices(item_id, self.id)
+        prices_df = pd.DataFrame.from_dict(prices)
+        prices_df['timestamp'] = prices_df['timestamp'].apply(lambda x: (pd.Timestamp(x)))
+        prices_gb = prices_df.groupby(pd.Grouper(key='timestamp', axis=0, freq='D')).min().reset_index().dropna()
+
+        if len(prices_gb) > 1:
+            conditions = [
+                prices_gb.iloc[-1]['price'] > prices_gb.iloc[-2]['price'],
+                prices_gb.iloc[-1]['price'] == prices_gb.iloc[-2]['price'],
+                prices_gb.iloc[-1]['price'] < prices_gb.iloc[-2]['price']
+            ]
+            choices = [
+                f'up',
+                f'down',
+                f'stable',
+            ]
+
+        price_tag = {
+            'last' : prices_gb.iloc[-1]["price"],
+            'best' : prices_gb['price'].min() if (len(prices_gb) > 1) else '-',
+            'median' : prices_gb['price'].median() if (len(prices_gb) > 1) else '-',
+            'mode' : prices_gb['price'].mode()[0] if (len(prices_gb) > 1) else '-',
+            'trend' : np.select(conditions, choices, default='-') if (len(prices_gb) > 1) else 'new'
+        }
+        return price_tag
 
     def run(self):
         while not self.__stop_req:
             self.get_prices()
-            #time.sleep(self.refresh_time)
-            time.sleep(3600)
+            time.sleep(self.refresh_time)
         self.__stop_req = False
 
     def stop(self):

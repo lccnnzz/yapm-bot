@@ -8,10 +8,14 @@ import time
 import re
 import pandas as pd
 import numpy as np
+import json 
+
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove
+    ReplyKeyboardRemove,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,6 +23,7 @@ from telegram.ext import (
     CommandHandler, 
     ConversationHandler,
     CallbackContext,
+    CallbackQueryHandler,
     MessageHandler,
     filters,
 )
@@ -38,14 +43,13 @@ class Bot(threading.Thread):
         self.monitors = monitors
         self.application = ApplicationBuilder().token(token).build()
         self.application.add_handler(CommandHandler('start', self.join))
-        self.application.add_handler(CommandHandler('prices', self.last_prices))
         self.application.add_handler(CommandHandler('list', self.items))
         self.application.add_handler(CommandHandler('info', self.info))
+        self.application.add_handler(CallbackQueryHandler(self.button))
 
         # Conversation handlers config
         self.ITEM_ID, self.ITEM_NAME, self.ITEM, self.REFRESH_TIME = range(4)
         self.application.add_handler(self.__additem_handler())
-        self.application.add_handler(self.__delitem_handler())
         self.application.add_handler(self.__setrefreshtime_handler())
         
         # Database config
@@ -54,7 +58,7 @@ class Bot(threading.Thread):
 
     async def imalive(self, application):
         for user in self.db.users():
-            message = f'Ciao {user['name']}, il bot è stato riavviato!\nSeleziona il comando /start, grazie.'
+            message = f'Ciao {user["name"]}, il bot è stato riavviato!\nSeleziona il comando /start, grazie.'
             await self.application.bot.send_message(chat_id=user['id'], text=message)
 
     def run(self):
@@ -86,6 +90,47 @@ class Bot(threading.Thread):
     def unshorten(self, url:str):
         return requests.get(url).url
 
+    def get_pricetag(self, monitor:Monitor, item):
+        price = monitor.item_pricetag(item['item_id'])
+        match price['trend']:
+            case 'up':
+                trend_icon = f'↗️'
+            case 'down':
+                trend_icon = f'↘️'
+            case 'stable':
+                trend_icon = f'↕️'
+            case 'new':
+                trend_icon = f'🆕'
+            case 'special':
+                trend_icon = f'🆒'       
+        message = f'📦 {item["item_name"]} 📦\n{trend_icon}\tAttuale:\t\t{price["last"]}€\n🔻\tMigliore:\t\t{price["best"]}€\n🔹\tMedio:\t\t{price["median"]}€\n🕒\tFrequente:\t{price["mode"]}€'
+        keyboard = InlineKeyboardMarkup([
+                [   
+                    InlineKeyboardButton(f'🗑️ Elimina', callback_data=json.dumps({'command' : 'DELETE','item_id' : item['item_id']})),
+                    InlineKeyboardButton(f'🛒 Acquista ', callback_data=json.dumps({'command' : 'BUY','item_id' : item['item_id']}))
+                ]
+            ])
+        return (message, keyboard)
+
+    async def button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        monitor = self.get_monitor(update.effective_user.id)
+        query = update.callback_query
+        await query.answer()
+        data = json.loads(query.data)
+        match data['command']:
+            case 'DELETE':
+                monitor.remove_item(data['item_id'])
+                await query.edit_message_text(text=f"L'articolo è stato rimosso!")
+            case 'BUY':
+                pass
+
+    
+    async def notify(self, context: ContextTypes.DEFAULT_TYPE):
+        monitor = self.get_monitor(context.job.chat_id)
+        for item in monitor.items():
+            pricetag, keyboard_markup = self.get_pricetag(monitor, item)
+            await context.bot.send_message(context.job.chat_id, text=f'{pricetag}', reply_markup=keyboard_markup)
+    
     # Command Handlers
     async def join(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
@@ -99,45 +144,23 @@ class Bot(threading.Thread):
         
     async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
-        message = f"📦 Yet Another Price Monitor 📦\n#️⃣ Versione: 0.5\n🗓️ Rilasciato il: 22 Dic 2023\n🔓 Licenza: Copyleft\n📝 Github: lccnnzz"
+        message = f"📦 Yet Another Price Monitor 📦\n#️⃣ Versione: 0.9\n🗓️ Rilasciato il: 1 Febbraio 2024\n🔓 Licenza: Copyleft\n📝 Github: lccnnzz"
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
     async def add_item(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('Inserisci il codice del prodotto o il link Amazon')
         return self.ITEM_ID
-    
-    async def del_item(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
-        monitor = self.get_monitor(user.id)
-        choices = [[f'{item["item_name"]}'] for item in monitor.items()]
-        keyboard_markup = ReplyKeyboardMarkup(choices, resize_keyboard=True, one_time_keyboard=True, input_field_placeholder=f'Quale vuoi eliminare?')
-        await update.message.reply_text(f'Questi sono gli articoli nella tua lista', reply_markup=keyboard_markup)
-        return self.ITEM_NAME
-
-    async def last_prices(self,  update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
-        monitor = self.get_monitor(user.id)
-        if monitor.items():
-            lines = [f'•\t{item["name"]}\t{item["price"]}€' for item in monitor.last_prices()]  
-            if lines:
-                await update.message.reply_text('\n'.join(lines))
-            else:
-                await update.message.reply_text('😞 Spiacente, non è stato ancora aggiornato il prezzo degli articoli che hai inserito')
-        else:
-            await update.message.reply_text('😞 Spiacente, non hai ancora inserito articoli in monitoraggio')
-
+        
     async def items(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         monitor = self.get_monitor(user.id)
-        lines = [f'📦 ({item["item_id"]})\t{item["item_name"]}' for item in monitor.items()]
-        if lines:
-            await update.message.reply_text('\n'.join(lines))
-        else:
-            await update.message.reply_text('😞 Spiacente, non hai ancora inserito articoli in monitoraggio')
+        for item in monitor.items():
+            pricetag, keyboard_markup = self.get_pricetag(monitor, item)
+            await update.message.reply_text(f'{pricetag}', reply_markup=keyboard_markup)
 
     async def set_refreshtime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         monitor = self.get_monitor(update.effective_user.id)
-        await update.message.reply_text(f"⌛️ L'intervallo di aggiornamento attuale è {monitor.refresh_time} s.\nInserisci il nuovo intervallo in secondi (min 3600)")
+        await update.message.reply_text(f"⌛️ L'intervallo di aggiornamento attuale è {monitor.refresh_time} s.\nInserisci il nuovo intervallo in secondi (min {MIN_REFRESH_TIME})")
         return self.REFRESH_TIME
 
     # Conversation Handlers
@@ -172,14 +195,6 @@ class Bot(threading.Thread):
         monitor.data = {}
         return ConversationHandler.END
 
-    ## Remove item
-    async def item(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        monitor = self.get_monitor(update.effective_user.id)
-        item_id = [item['item_id'] for item in monitor.items() if item['item_name'] == update.message.text][0]
-        monitor.remove_item(item_id)
-        await update.message.reply_text(f'✅ Prodotto è stato rimosso dalla tua lista')
-        return ConversationHandler.END
-    
     ## Change refresh time
     async def refresh_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         monitor = self.get_monitor(update.effective_user.id)
@@ -205,15 +220,6 @@ class Bot(threading.Thread):
             fallbacks=[]
         )
     
-    def __delitem_handler(self):
-        return ConversationHandler(
-            entry_points=[CommandHandler('del', self.del_item)],
-            states={
-                self.ITEM_NAME : [MessageHandler(filters.TEXT & ~filters.COMMAND, self.item)],
-            },
-            fallbacks=[]
-        )
-
     def __setrefreshtime_handler(self):
         return ConversationHandler(
             entry_points=[CommandHandler('freq', self.set_refreshtime)],
@@ -221,33 +227,4 @@ class Bot(threading.Thread):
                 self.REFRESH_TIME : [MessageHandler(filters.TEXT & ~filters.COMMAND, self.refresh_time)],
             },
             fallbacks=[]
-        )
-        
-    async def notify(self, context: ContextTypes.DEFAULT_TYPE):
-        monitor = self.get_monitor(context.job.chat_id)
-        for item in monitor.items():
-            prices = monitor.item_prices(item['item_id'])
-            prices_df = pd.DataFrame.from_dict(prices)
-            prices_df['timestamp'] = prices_df['timestamp'].apply(lambda x: (pd.Timestamp(x)))
-            prices_gb = prices_df.groupby(pd.Grouper(key='timestamp', axis=0, freq='D')).min().reset_index().dropna()
-        
-            conditions = [
-                prices_gb.iloc[-1]['price'] > prices_gb.iloc[-2]['price'],
-                prices_gb.iloc[-1]['price'] == prices_gb.iloc[-2]['price'],
-                prices_gb.iloc[-1]['price'] < prices_gb.iloc[-2]['price']
-            ]
-            choices = [
-                f'↗️',
-                f'↘️',
-                f'⏸️',
-            ]
-            price = {
-                'last' : prices_gb.iloc[-1]["price"],
-                'best' : prices_gb['price'].min(),
-                'median' : prices_gb['price'].median(),
-                'mode' : prices_gb['price'].mode()[0],
-                'trend' : np.select(conditions, choices, default='-')
-            }
-
-            message = f'{item["item_name"]}\n\tPrezzo aggiornato:\t{price["last"]}€ {price["trend"]}\n\tPrezzo più basso:\t{price["best"]}€\n\tPrezzo mediano:\t\t{price["median"]}€\n\tPrezzo frequente:\t{price["mode"]}€'
-            await context.bot.send_message(context.job.chat_id, text=message)
+        )      

@@ -4,3 +4,4 @@ modules/__pycache__/bot.cpython-312.pyc
 modules/__pycache__/database.cpython-312.pyc
 modules/__pycache__/monitor.cpython-312.pyc
 data/mio.db
+modules/.DS_Store
